@@ -2,6 +2,7 @@ import imaplib
 import email
 from email.header import decode_header
 from bs4 import BeautifulSoup
+from datetime import datetime, timezone, timedelta
 import models
 
 def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, limit: int = 5):
@@ -58,10 +59,13 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
                     try:
                         if raw_date:
                             parsed_date = email.utils.parsedate_to_datetime(raw_date)
-                            formatted_date = parsed_date.strftime("%Y/%m/%d %H:%M:%S")
+                            # Convert to GMT+8 timezone
+                            gmt8_tz = timezone(timedelta(hours=8))
+                            gmt8_date = parsed_date.astimezone(gmt8_tz)
+                            formatted_date = gmt8_date.strftime("%Y/%m/%d %H:%M:%S")
                     except:
                         pass
-                        
+
                     email_content["date"] = formatted_date
 
                     body = ""
