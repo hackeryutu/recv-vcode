@@ -3,6 +3,14 @@ Application Configuration
 Central place for all configuration values
 """
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Ensure .env variables are available before reading any settings so that
+# deploying without exporting env vars still works.
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 # Admin Authentication
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")

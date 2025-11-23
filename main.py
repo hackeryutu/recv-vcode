@@ -129,5 +129,14 @@ def get_mail_messages(
 
     logger.info(f"[API] Fetching emails for: {account.email}, imap_server: {account.imap_server}")
     emails = mail_service.fetch_recent_emails(account, sender_filter=sender)
-    logger.info(f"[API] Fetch complete - result type: {type(emails).__name__}, is_error: {'error' in emails if isinstance(emails, dict) else False}")
+
+    if isinstance(emails, list):
+        logger.info(f"[API] Fetch success - account: {account.email}, sender: {sender or account.default_sender_filter}, fetched: {len(emails)}")
+    elif isinstance(emails, dict) and "error" in emails:
+        logger.error(f"[API] Fetch failed - account: {account.email}, sender: {sender or account.default_sender_filter}, reason: {emails.get('error')}")
+    elif isinstance(emails, dict):
+        logger.info(f"[API] Fetch result - account: {account.email}, sender: {sender or account.default_sender_filter}, message: {emails}")
+    else:
+        logger.warning(f"[API] Fetch returned unexpected result type={type(emails).__name__} for account: {account.email}")
+
     return emails

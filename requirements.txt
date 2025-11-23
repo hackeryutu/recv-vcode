@@ -5,3 +5,4 @@ sqlalchemy
 pydantic
 jinja2
 shortuuid
+python-dotenv

@@ -10,6 +10,10 @@ import config as app_config
 
 logger = logging.getLogger(__name__)
 
+GENERIC_TIMEOUT_ERROR = "邮件服务超时，请稍后再试"
+GENERIC_CONNECTION_ERROR = "无法连接邮件服务器，请稍后重试"
+GENERIC_FETCH_ERROR = "获取邮件失败，请稍后再试"
+
 def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, limit: int = 5, timeout: int = None):
     # Use configured timeout if not specified
     if timeout is None:
@@ -36,10 +40,10 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
         logger.info("[MAIL] Login successful")
     except socket.timeout:
         logger.error(f"[MAIL] IMAP connection/login timeout after {timeout}s - Failed to connect or authenticate to {config.imap_server}")
-        return {"error": f"IMAP connection/login timeout after {timeout}s"}
+        return {"error": GENERIC_TIMEOUT_ERROR}
     except Exception as e:
         logger.error(f"[MAIL] Connection/Login failed: {str(e)}")
-        return {"error": f"Connection failed: {str(e)}"}
+        return {"error": GENERIC_CONNECTION_ERROR}
 
     try:
         logger.info("[MAIL] Selecting inbox...")
@@ -149,9 +153,15 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
             email_list.append(email_content)
 
         logger.info(f"[MAIL] Closing connection, total emails fetched: {len(email_list)}")
-        mail.close()
-        mail.logout()
-        logger.info("[MAIL] Connection closed successfully")
+        try:
+            mail.close()
+            mail.logout()
+            logger.info("[MAIL] Connection closed successfully")
+        except socket.timeout:
+            logger.warning(f"[MAIL] Timeout while closing connection after {timeout}s - returning already fetched emails")
+        except Exception as close_error:
+            logger.warning(f"[MAIL] Error while closing connection: {close_error}")
+
         return email_list
 
     except socket.timeout:
@@ -162,7 +172,7 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
             mail.logout()
         except:
             pass
-        return {"error": error_msg}
+        return {"error": GENERIC_TIMEOUT_ERROR}
     except Exception as e:
         logger.error(f"[MAIL] Error fetching mail: {str(e)}")
         try:
@@ -170,4 +180,4 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
             mail.logout()
         except:
             pass
-        return {"error": f"Error fetching mail: {str(e)}"}
+        return {"error": GENERIC_FETCH_ERROR}

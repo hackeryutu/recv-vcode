@@ -1,126 +1,121 @@
 # Mail Verification Service
 
-这是一个基于 FastAPI 的邮件验证服务，支持邮件账户管理和邮件查看功能。
+基于 FastAPI 的邮件收取与查看服务，提供管理员后台、前端页面以及 REST API，方便在 Web 中快速查阅验证码或通知邮件。
 
 ## 功能特性
 
-- **管理员后台**：管理邮箱账户（增删改查）。
-- **邮件查看**：通过 Web 界面查看指定账户的邮件。
-- **API 支持**：提供 RESTful API 获取邮件列表。
-- **异步获取**：邮件列表异步加载，提升用户体验。
+- **管理员后台**：增删改查邮箱账户，生成唯一 `mail_id` 与访问令牌。
+- **邮件查看页面**：终端用户可通过链接查看特定邮箱的最近邮件，可按发件人筛选。
+- **REST API**：通过 `/api/mail/messages` 获取邮件列表，便于自动化集成。
+- **统一配置**：超时、日志等级和管理员凭证均可通过 `.env` 灵活配置。
 
 ## 环境要求
 
 - Python 3.8+
-- 依赖包见 `requirements.txt`
+- 依赖包见 `requirements.txt`（FastAPI、SQLAlchemy、python-dotenv 等）
+- 默认使用 SQLite，首次启动时会在项目根目录创建 `mail_app.db`
 
-## 安装说明
+## 快速开始
 
-1. 克隆或下载本项目到本地。
-2. 安装依赖：
+1. **获取代码**
+   ```bash
+   git clone <repo-url>
+   cd recv-vcode
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+2. **创建并激活虚拟环境**
+
+   Windows（PowerShell）：
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\activate
+   ```
+
+   macOS / Linux：
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. **安装依赖**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. **准备配置文件**
+   ```bash
+   cp .env.example .env
+   ```
+   根据实际情况修改 `.env`，应用启动时会自动加载该文件。
+
+## 配置说明 (`.env`)
+
+| 变量名            | 描述                                         | 默认值            |
+| ----------------- | -------------------------------------------- | ----------------- |
+| `ADMIN_USERNAME`  | 管理后台用户名                               | `admin`           |
+| `ADMIN_PASSWORD`  | 管理后台密码                                 | `admin123`        |
+| `DEFAULT_TIMEOUT` | 所有外部请求默认超时（秒）                   | `30`              |
+| `IMAP_TIMEOUT`    | IMAP 连接/检索超时（秒），未设置时跟随默认值 | `DEFAULT_TIMEOUT` |
+| `HTTP_TIMEOUT`    | 其他 HTTP 请求超时（秒）                     | `DEFAULT_TIMEOUT` |
+| `LOG_LEVEL`       | 日志等级，`INFO`/`DEBUG`/`WARNING` 等        | `INFO`            |
+| `LOG_FORMAT`      | 日志格式字符串                               | `%(asctime)s - %(name)s - %(levelname)s - %(message)s` |
+
+> 修改 `.env` 后重启服务即可生效，无需额外导出环境变量。
 
 ## 运行服务
 
-### 1. 开发模式（前台运行）
-
-在开发调试阶段，可以使用以下命令启动服务（支持代码热重载）：
+### 开发模式（前台）
 
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-启动后访问：
-- 管理后台：`http://<服务器IP>:8000/admin`
-  - 默认账号：`admin`
-  - 默认密码：`admin123`
+- 管理后台：`http://127.0.0.1:8000/admin`
+- 登录凭证来自 `.env` 的 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`
 
-### 2. 服务器后台启动
+### 后台运行
 
-#### Linux / macOS (推荐)
-
-使用 `nohup` 命令让服务在后台运行，并将日志输出到 `server.log`：
-
+**Linux / macOS**
 ```bash
 nohup uvicorn main:app --host 0.0.0.0 --port 8000 > server.log 2>&1 &
 ```
+停止服务：
+```bash
+ps -ef | grep uvicorn
+kill -9 <PID>
+```
 
-- **停止服务**：
-  先找到进程 ID (PID)，然后 kill 掉：
-  ```bash
-  ps -ef | grep uvicorn
-  kill -9 <PID>
-  ```
-
-#### Windows
-
-使用 `start` 命令在后台启动：
-
+**Windows**
 ```powershell
 start /B uvicorn main:app --host 0.0.0.0 --port 8000 > server.log 2>&1
 ```
+或自定义 `run.py` 后使用 `pythonw run.py` 在后台运行。
 
-或者使用 Python 脚本启动（需创建一个 `run.py`）：
+## 使用指南
 
-```python
-# run.py
-import uvicorn
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")
-```
-然后使用 `pythonw` (无窗口模式) 运行：
-```powershell
-pythonw run.py
-```
+### 管理员后台
+- 地址：`/admin`
+- 功能：新增邮箱、编辑现有配置、删除账户。
+- 每个账户会生成一个 `mail_id` 与 `access_token`，供前台和 API 使用。
 
-## 访问与使用
+### 邮件查看页面
+- 地址：`/mail?mail_id=<ID>&token=<TOKEN>&sender=<可选>`
+- 作用：供最终用户查看最近邮件，可通过 `sender` 限制发件人。
 
-服务启动后，可以通过浏览器访问以下地址：
+### REST API
+- `GET /api/mail/messages`
+  - **必填**：`mail_id`、`token`
+  - **选填**：`sender`（覆盖账户默认的发件人过滤）
+  - **响应**：成功返回邮件列表；错误返回 `{ "error": "..." }`
 
-### 1. 管理员后台
-用于管理邮箱账户，包括创建新账户和查看现有账户信息。
+## 安全与维护建议
 
-- **访问地址**: `http://<服务器IP>:8000/admin`
-  - 本地测试：`http://127.0.0.1:8000/admin`
-- **登录认证**:
-  - 默认账号：`admin`
-  - 默认密码：`admin123`
+- 部署前务必修改 `.env` 中的管理员账号密码。
+- 根据 IMAP 服务稳定性适当调整 `DEFAULT_TIMEOUT` / `IMAP_TIMEOUT`。
+- 生产环境建议配合 systemd、supervisor 或容器平台托管进程，并妥善管理日志。
 
-### 2. 邮件查看页面
-用户查看特定邮箱的邮件列表。需要使用管理员后台分配的 `mail_id` 和 `token`。
+## 故障排查
 
-- **地址格式**: 
-  ```
-  http://<服务器IP>:8000/mail?mail_id=<邮箱ID>&token=<访问令牌>
-  ```
-- **示例**: 
-  `http://<服务器IP>:8000/mail?mail_id=1001&token=8f4b2e1...`
-- **参数说明**:
-  - `mail_id`: 邮箱唯一标识 ID
-  - `token`: 安全访问令牌 (Access Token)
-  - `sender`: (可选) 仅显示指定发件人的邮件
-
-## API 接口说明
-
-- `GET /api/mail/messages`: 获取邮件列表数据 (JSON)
-  - 参数: `mail_id`, `token`, `sender`
-
-## 修改管理员密码
-
-默认的管理员账号密码配置在 `main.py` 文件中。为了安全起见，建议在部署前修改。
-
-1. 打开 `main.py` 文件。
-2. 找到 `get_current_username` 函数（约第 20 行）。
-3. 修改 `secrets.compare_digest` 中的第二个参数：
-
-```python
-# 修改用户名
-correct_username = secrets.compare_digest(credentials.username, "你的新用户名")
-# 修改密码
-correct_password = secrets.compare_digest(credentials.password, "你的新密码")
-```
-
-4. 保存文件并重启服务即可生效。
+- **连接超时**：确认网络、防火墙或提升 `IMAP_TIMEOUT`。
+- **日志仍显示 30 秒超时**：确保 `.env` 已更新并重启过服务，或直接导出环境变量覆盖。
+- **邮件为空**：检查管理员后台配置的默认发件人或在请求中显式传入 `sender`。
