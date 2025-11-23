@@ -1,0 +1,7 @@
+beautifulsoup4
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+jinja2
+shortuuid

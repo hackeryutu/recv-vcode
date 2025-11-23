@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>邮件管理后台</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+        }
+
+        .form-group {
+            margin-bottom: 10px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button.delete {
+            background-color: #f44336;
+        }
+
+        button.edit {
+            background-color: #008CBA;
+        }
+
+        button.copy {
+            background-color: #555;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 8% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 500px;
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>邮箱账户管理</h1>
+    <p>欢迎, {{ username }}</p>
+
+    <button onclick="openModal()">添加新账户</button>
+
+    <table id="accountsTable">
+        <thead>
+            <tr>
+                <th>邮箱 ID</th>
+                <th>邮箱地址</th>
+                <th>发件人过滤</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <div id="accountModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2 id="modalTitle">添加账户</h2>
+            <form id="accountForm">
+                <input type="hidden" id="accountId">
+                <div class="form-group">
+                    <label>邮箱地址</label>
+                    <input type="email" id="email" required>
+                </div>
+                <div class="form-group">
+                    <label>密码 <a href="https://support.google.com/accounts/answer/185833?hl=zh-Hans" target="_blank"
+                            style="font-size: 0.8em;">(帮助: 创建应用专用密码)</a></label>
+                    <input type="text" id="password" required placeholder="请使用应用专用密码，而非登录密码">
+                </div>
+                <div class="form-group">
+                    <label>IMAP 服务器 (留空自动检测)</label>
+                    <input type="text" id="imapServer">
+                </div>
+                <div class="form-group">
+                    <label>访问令牌 (留空自动生成)</label>
+                    <input type="text" id="accessToken" placeholder="自动生成">
+                </div>
+                <div class="form-group">
+                    <label>默认发件人过滤</label>
+                    <input type="text" id="senderFilter">
+                </div>
+                <button type="submit">保存</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/admin/accounts';
+        let isEditing = false;
+
+        async function fetchAccounts() {
+            const response = await fetch(API_URL);
+            const accounts = await response.json();
+            const tbody = document.querySelector('#accountsTable tbody');
+            tbody.innerHTML = '';
+            accounts.forEach(acc => {
+                const tr = document.createElement('tr');
+
+                // Create cells
+                const tdMailId = document.createElement('td');
+                tdMailId.textContent = acc.mail_id;
+
+                const tdEmail = document.createElement('td');
+                tdEmail.textContent = acc.email;
+
+                const tdFilter = document.createElement('td');
+                tdFilter.textContent = acc.default_sender_filter || '-';
+
+                const tdActions = document.createElement('td');
+
+                // Edit button
+                const btnEdit = document.createElement('button');
+                btnEdit.className = 'edit';
+                btnEdit.textContent = '编辑';
+                btnEdit.onclick = () => editAccount(acc);
+
+                // Delete button
+                const btnDelete = document.createElement('button');
+                btnDelete.className = 'delete';
+                btnDelete.textContent = '删除';
+                btnDelete.onclick = () => deleteAccount(acc.id);
+
+                // Copy link button
+                const btnCopy = document.createElement('button');
+                btnCopy.className = 'copy';
+                btnCopy.textContent = '复制链接';
+                btnCopy.onclick = () => copyLink(acc.mail_id, acc.access_token);
+
+                tdActions.appendChild(btnEdit);
+                tdActions.appendChild(btnDelete);
+                tdActions.appendChild(btnCopy);
+
+                tr.appendChild(tdMailId);
+                tr.appendChild(tdEmail);
+                tr.appendChild(tdFilter);
+                tr.appendChild(tdActions);
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        function copyLink(mailId, token) {
+            const url = `${window.location.origin}/mail?mail_id=${mailId}&token=${token}`;
+            navigator.clipboard.writeText(url).then(() => {
+                alert('链接已复制到剪贴板！');
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                alert('复制链接失败。');
+            });
+        }
+
+        function openModal() {
+            document.getElementById('accountModal').style.display = 'block';
+            document.getElementById('modalTitle').innerText = '添加账户';
+            document.getElementById('accountForm').reset();
+            document.getElementById('accountId').value = '';
+            isEditing = false;
+        }
+
+        function closeModal() {
+            document.getElementById('accountModal').style.display = 'none';
+        }
+
+        function editAccount(acc) {
+            openModal();
+            document.getElementById('modalTitle').innerText = '编辑账户';
+            document.getElementById('accountId').value = acc.id;
+            document.getElementById('email').value = acc.email;
+            document.getElementById('password').value = acc.password;
+            document.getElementById('imapServer').value = acc.imap_server;
+            document.getElementById('accessToken').value = acc.access_token;
+            document.getElementById('senderFilter').value = acc.default_sender_filter;
+            isEditing = true;
+        }
+
+        async function deleteAccount(id) {
+            if (confirm('确定要删除吗？')) {
+                await fetch(`${API_URL}/${id}`, { method: 'DELETE' });
+                fetchAccounts();
+            }
+        }
+
+        document.getElementById('accountForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('accountId').value;
+            const data = {
+                email: document.getElementById('email').value,
+                password: document.getElementById('password').value,
+                imap_server: document.getElementById('imapServer').value || "outlook.office365.com", // Default fallback
+                access_token: document.getElementById('accessToken').value,
+                default_sender_filter: document.getElementById('senderFilter').value
+            };
+
+            // Simple auto-detect logic for UI convenience
+            if (data.email.includes('@gmail.com') && (!data.imap_server || data.imap_server === "outlook.office365.com")) {
+                data.imap_server = "imap.gmail.com";
+            }
+
+            const method = isEditing ? 'PUT' : 'POST';
+            const url = isEditing ? `${API_URL}/${id}` : API_URL;
+
+            const response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                closeModal();
+                fetchAccounts();
+            } else {
+                const err = await response.json();
+                alert('错误: ' + err.detail);
+            }
+        });
+
+        fetchAccounts();
+    </script>
+</body>
+
+</html>

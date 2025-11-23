@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>查看邮箱</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .email-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            min-height: 200px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+
+        .email-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .email-item {
+            border-bottom: 1px solid #eee;
+            padding: 15px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .email-item:last-child {
+            border-bottom: none;
+        }
+
+        .subject {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .date {
+            font-size: 14px;
+            color: #888;
+            margin-left: 20px;
+            white-space: nowrap;
+        }
+
+        .error {
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        /* Loading Spinner */
+        .loader-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 150px;
+        }
+
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        .loader-text {
+            color: #666;
+            font-size: 16px;
+            margin-top: 10px;
+            font-weight: 500;
+        }
+
+        .loader-text:after {
+            content: ' .';
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes dots {
+
+            0%,
+            20% {
+                content: ' .';
+            }
+
+            40% {
+                content: ' ..';
+            }
+
+            60% {
+                content: ' ...';
+            }
+
+            80%,
+            100% {
+                content: ' ....';
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-container">
+        <h1>邮件查看【{{ email }}】</h1>
+
+        <div id="loader" class="loader-container">
+            <div class="loader"></div>
+            <div class="loader-text">获取中</div>
+        </div>
+
+        <div id="error-msg" class="error" style="display: none;"></div>
+
+        <ul id="email-list" class="email-list" style="display: none;">
+            <!-- Emails will be inserted here -->
+        </ul>
+    </div>
+
+    <script>
+        const mailId = "{{ mail_id }}";
+        const token = "{{ token }}";
+        const sender = "{{ sender or '' }}";
+
+        async function fetchEmails() {
+            const loader = document.getElementById('loader');
+            const list = document.getElementById('email-list');
+            const errorMsg = document.getElementById('error-msg');
+
+            try {
+                let url = `/api/mail/messages?mail_id=${mailId}&token=${token}`;
+                if (sender && sender !== 'None') {
+                    url += `&sender=${sender}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                loader.style.display = 'none';
+
+                if (data.error) {
+                    errorMsg.innerText = 'Error: ' + data.error;
+                    errorMsg.style.display = 'block';
+                    return;
+                }
+
+                if (Array.isArray(data)) {
+                    list.innerHTML = '';
+                    if (data.length === 0) {
+                        list.innerHTML = '<li style="text-align:center; padding: 20px; color: #888;">No emails found</li>';
+                    } else {
+                        data.forEach(email => {
+                            const li = document.createElement('li');
+                            li.className = 'email-item';
+                            li.innerHTML = `
+                                <span class="subject">${email.subject}</span>
+                                <span class="date">${email.date || ''}</span>
+                            `;
+                            list.appendChild(li);
+                        });
+                    }
+                    list.style.display = 'block';
+                } else if (data.message) {
+                    list.innerHTML = `<li style="text-align:center; padding: 20px; color: #888;">${data.message}</li>`;
+                    list.style.display = 'block';
+                }
+
+            } catch (err) {
+                loader.style.display = 'none';
+                errorMsg.innerText = 'Failed to load emails: ' + err.message;
+                errorMsg.style.display = 'block';
+            }
+        }
+
+        // Start fetching immediately
+        fetchEmails();
+    </script>
+</body>
+
+</html>
