@@ -47,3 +47,31 @@ def delete_email_account(db: Session, account_id: int):
         db.commit()
         return True
     return False
+
+
+def get_email_cache(db: Session, account_id: int):
+    return db.query(models.EmailCache).filter(models.EmailCache.account_id == account_id).first()
+
+
+def upsert_email_cache(
+    db: Session,
+    account_id: int,
+    serialized_ids: str,
+    serialized_payload: str,
+):
+    cache_entry = get_email_cache(db, account_id)
+
+    if cache_entry:
+        cache_entry.message_ids = serialized_ids
+        cache_entry.payload = serialized_payload
+    else:
+        cache_entry = models.EmailCache(
+            account_id=account_id,
+            message_ids=serialized_ids,
+            payload=serialized_payload,
+        )
+        db.add(cache_entry)
+
+    db.commit()
+    db.refresh(cache_entry)
+    return cache_entry

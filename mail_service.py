@@ -1,10 +1,12 @@
 import imaplib
 import email
+import json
 from email.header import decode_header
-from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
 import logging
 import socket
+from sqlalchemy.orm import Session
+import crud
 import models
 import config as app_config
 
@@ -14,13 +16,21 @@ GENERIC_TIMEOUT_ERROR = "邮件服务超时，请稍后再试"
 GENERIC_CONNECTION_ERROR = "无法连接邮件服务器，请稍后重试"
 GENERIC_FETCH_ERROR = "获取邮件失败，请稍后再试"
 
-def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, limit: int = 5, timeout: int = None):
+def fetch_recent_emails(
+    config: models.EmailAccount,
+    sender_filter: str = None,
+    limit: int = 5,
+    timeout: int = None,
+    db: Session = None,
+):
     # Use configured timeout if not specified
     if timeout is None:
         timeout = app_config.IMAP_TIMEOUT
 
     target_sender = sender_filter if sender_filter else config.default_sender_filter
     logger.info(f"[MAIL] fetch_recent_emails started - email: {config.email}, sender_filter: {target_sender}, timeout: {timeout}s")
+
+    cache_entry = crud.get_email_cache(db, config.id) if db else None
 
     if not target_sender:
         logger.warning("[MAIL] No sender filter specified")
@@ -79,78 +89,92 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
         recent_email_ids.reverse() # Newest first
         logger.info(f"[MAIL] Processing {len(recent_email_ids)} recent email(s)")
 
-        email_list = []
+        if not recent_email_ids:
+            return []
 
-        for idx, e_id in enumerate(recent_email_ids):
-            logger.info(f"[MAIL] Fetching email {idx + 1}/{len(recent_email_ids)} (id: {e_id})")
+        id_strings = [e_id.decode() for e_id in recent_email_ids if e_id]
+
+        if cache_entry and cache_entry.message_ids and cache_entry.payload:
             try:
-                status, msg_data = mail.fetch(e_id, "(RFC822)")
-            except socket.timeout:
-                logger.error(f"[MAIL] Timeout while fetching email {idx + 1}/{len(recent_email_ids)} (id: {e_id}) after {timeout}s")
-                raise
-            
-            email_content = {"subject": "Unknown", "body": "", "from": "", "date": ""}
+                cached_ids = json.loads(cache_entry.message_ids)
+                cached_payload = json.loads(cache_entry.payload)
+            except json.JSONDecodeError:
+                cached_ids = cached_payload = None
+            else:
+                if cached_ids == id_strings:
+                    logger.info(f"[MAIL] Returning cached emails (no new messages) for account: {config.email}")
+                    return cached_payload
 
-            for response_part in msg_data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    
-                    # Decode subject
-                    subject, encoding = decode_header(msg["Subject"])[0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode(encoding if encoding else "utf-8")
-                    
-                    email_content["subject"] = subject
-                    email_content["from"] = msg.get("From")
-                    
-                    raw_date = msg.get("Date")
-                    formatted_date = raw_date
-                    try:
-                        if raw_date:
-                            parsed_date = email.utils.parsedate_to_datetime(raw_date)
-                            # Convert to GMT+8 timezone
-                            gmt8_tz = timezone(timedelta(hours=8))
-                            gmt8_date = parsed_date.astimezone(gmt8_tz)
-                            formatted_date = gmt8_date.strftime("%Y/%m/%d %H:%M:%S")
-                    except:
-                        pass
+        # Fetch all headers in a single IMAP call for better performance
+        message_set = ",".join(id_strings)
+        logger.info(f"[MAIL] Fetching headers in batch for ids: {message_set}")
 
-                    email_content["date"] = formatted_date
+        try:
+            status, msg_data = mail.fetch(message_set, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])')
+        except socket.timeout:
+            logger.error(f"[MAIL] Timeout while fetching batched headers after {timeout}s")
+            raise
 
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            content_type = part.get_content_type()
-                            content_disposition = str(part.get("Content-Disposition"))
+        if status != "OK":
+            logger.warning(f"[MAIL] Failed to fetch headers batch, status: {status}")
+            return {"error": GENERIC_FETCH_ERROR}
 
-                            try:
-                                payload = part.get_payload(decode=True)
-                                if payload:
-                                    decoded_payload = payload.decode()
-                                else:
-                                    continue
-                            except:
-                                continue
+        headers_map = {}
+        for response_part in msg_data:
+            if not isinstance(response_part, tuple) or not response_part[1]:
+                continue
 
-                            if content_type == "text/plain" and "attachment" not in content_disposition:
-                                body += decoded_payload
-                            elif content_type == "text/html" and "attachment" not in content_disposition:
-                                soup = BeautifulSoup(decoded_payload, "html.parser")
-                                body += soup.get_text()
-                    else:
-                        content_type = msg.get_content_type()
-                        payload = msg.get_payload(decode=True)
-                        if payload:
-                            decoded_payload = payload.decode()
-                            if content_type == "text/html":
-                                soup = BeautifulSoup(decoded_payload, "html.parser")
-                                body = soup.get_text()
-                            else:
-                                body = decoded_payload
-                    
-                    email_content["body"] = body.strip()
-            
-            email_list.append(email_content)
+            response_id = response_part[0]
+            if isinstance(response_id, bytes):
+                response_id = response_id.decode()
+            response_id = response_id.split()[0]
+
+            msg = email.message_from_bytes(response_part[1])
+            email_content = {"subject": "Unknown", "from": "", "date": ""}
+
+            raw_subject = msg.get("Subject")
+            if raw_subject:
+                subject, encoding = decode_header(raw_subject)[0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode(encoding if encoding else "utf-8", errors="ignore")
+                email_content["subject"] = subject
+
+            email_content["from"] = msg.get("From", "")
+
+            raw_date = msg.get("Date")
+            formatted_date = raw_date
+            try:
+                if raw_date:
+                    parsed_date = email.utils.parsedate_to_datetime(raw_date)
+                    # Convert to GMT+8 timezone
+                    gmt8_tz = timezone(timedelta(hours=8))
+                    gmt8_date = parsed_date.astimezone(gmt8_tz)
+                    formatted_date = gmt8_date.strftime("%Y/%m/%d %H:%M:%S")
+            except:
+                pass
+
+            email_content["date"] = formatted_date or ""
+            email_content["id"] = response_id
+            headers_map[response_id] = email_content
+
+        email_list = []
+        for e_id in recent_email_ids:
+            key = e_id.decode()
+            if key in headers_map:
+                email_list.append(headers_map[key])
+            else:
+                logger.warning(f"[MAIL] Missing header data for email id {key}")
+
+        if db:
+            try:
+                crud.upsert_email_cache(
+                    db,
+                    config.id,
+                    json.dumps(id_strings, ensure_ascii=False),
+                    json.dumps(email_list, ensure_ascii=False),
+                )
+            except Exception as cache_error:
+                logger.warning(f"[MAIL] Failed to update email cache: {cache_error}")
 
         logger.info(f"[MAIL] Closing connection, total emails fetched: {len(email_list)}")
         try:

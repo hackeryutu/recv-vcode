@@ -128,7 +128,7 @@ def get_mail_messages(
         raise HTTPException(status_code=403, detail="Invalid token")
 
     logger.info(f"[API] Fetching emails for: {account.email}, imap_server: {account.imap_server}")
-    emails = mail_service.fetch_recent_emails(account, sender_filter=sender)
+    emails = mail_service.fetch_recent_emails(account, sender_filter=sender, db=db)
 
     if isinstance(emails, list):
         logger.info(f"[API] Fetch success - account: {account.email}, sender: {sender or account.default_sender_filter}, fetched: {len(emails)}")
