@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQLite 数据浏览</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            word-break: break-all;
+        }
+
+        th {
+            background: #f4f4f4;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        select,
+        input,
+        button {
+            padding: 8px;
+        }
+
+        .summary {
+            font-size: 14px;
+            color: #555;
+        }
+
+        .error {
+            color: #b70000;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <div>
+            <h1>SQLite 数据浏览</h1>
+            <p>当前用户：{{ username }}</p>
+        </div>
+        <div>
+            <a href="/admin">返回账户管理</a>
+        </div>
+    </header>
+
+    <div class="controls">
+        <label>
+            数据表：
+            <select id="tableSelect"></select>
+        </label>
+        <label>
+            Limit:
+            <input type="number" id="limitInput" value="100" min="1" max="1000">
+        </label>
+        <label>
+            Offset:
+            <input type="number" id="offsetInput" value="0" min="0">
+        </label>
+        <button id="refreshBtn">刷新</button>
+    </div>
+
+    <div class="summary" id="summary"></div>
+    <div class="error" id="error"></div>
+
+    <div style="overflow-x:auto;">
+        <table id="dataTable">
+            <thead>
+                <tr id="tableHead"></tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <script>
+        const tablesUrl = '/admin/api/db/tables';
+        const tableDataUrl = '/admin/api/db/table';
+        const tableSelect = document.getElementById('tableSelect');
+        const limitInput = document.getElementById('limitInput');
+        const offsetInput = document.getElementById('offsetInput');
+        const summaryEl = document.getElementById('summary');
+        const errorEl = document.getElementById('error');
+        const tableHead = document.getElementById('tableHead');
+        const tableBody = document.getElementById('tableBody');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        async function loadTables() {
+            errorEl.textContent = '';
+            try {
+                const res = await fetch(tablesUrl);
+                const data = await res.json();
+                tableSelect.innerHTML = '';
+                data.tables.forEach(name => {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    tableSelect.appendChild(opt);
+                });
+                if (data.tables.length) {
+                    loadTableData();
+                } else {
+                    summaryEl.textContent = '数据库当前没有可显示的表。';
+                }
+            } catch (err) {
+                errorEl.textContent = '获取表列表失败：' + err;
+            }
+        }
+
+        async function loadTableData() {
+            const tableName = tableSelect.value;
+            if (!tableName) return;
+            errorEl.textContent = '';
+            summaryEl.textContent = '加载中...';
+
+            try {
+                const url = `${tableDataUrl}/${tableName}?limit=${limitInput.value}&offset=${offsetInput.value}`;
+                const res = await fetch(url);
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'unknown error');
+                }
+                const data = await res.json();
+                summaryEl.textContent = `共 ${data.total} 条记录，当前显示 ${data.rows.length} 条`;
+
+                tableHead.innerHTML = '';
+                tableBody.innerHTML = '';
+
+                if (data.columns.length === 0) {
+                    const th = document.createElement('th');
+                    th.textContent = '无数据';
+                    tableHead.appendChild(th);
+                    return;
+                }
+
+                data.columns.forEach(col => {
+                    const th = document.createElement('th');
+                    th.textContent = col;
+                    tableHead.appendChild(th);
+                });
+
+                data.rows.forEach(row => {
+                    const tr = document.createElement('tr');
+                    data.columns.forEach(col => {
+                        const td = document.createElement('td');
+                        const value = row[col];
+                        td.textContent = value === null || value === undefined ? '' : value;
+                        tr.appendChild(td);
+                    });
+                    tableBody.appendChild(tr);
+                });
+            } catch (err) {
+                errorEl.textContent = '读取表数据失败：' + err.message;
+            }
+        }
+
+        refreshBtn.addEventListener('click', loadTableData);
+        tableSelect.addEventListener('change', loadTableData);
+
+        loadTables();
+    </script>
+</body>
+
+</html>

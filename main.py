@@ -5,7 +5,9 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 import secrets
 import logging
+import re
 from sqlalchemy.orm import Session
+from sqlalchemy import text, inspect
 from typing import List, Optional
 
 import models, schemas, crud, database, mail_service, config
@@ -38,6 +40,46 @@ def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(request: Request, username: str = Depends(get_current_username)):
     return templates.TemplateResponse("admin/index.html", {"request": request, "username": username})
+
+@app.get("/admin/db", response_class=HTMLResponse)
+def admin_db_page(request: Request, username: str = Depends(get_current_username)):
+    return templates.TemplateResponse("admin/db_view.html", {"request": request, "username": username})
+
+def get_table_list():
+    inspector = inspect(database.engine)
+    return inspector.get_table_names()
+
+def validate_table_name(table_name: str):
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", table_name):
+        raise HTTPException(status_code=400, detail="Invalid table name")
+    available_tables = get_table_list()
+    if table_name not in available_tables:
+        raise HTTPException(status_code=404, detail="Table not found")
+    return table_name
+
+@app.get("/admin/api/db/tables")
+def list_db_tables(username: str = Depends(get_current_username)):
+    return {"tables": get_table_list()}
+
+@app.get("/admin/api/db/table/{table_name}")
+def get_table_data(
+    table_name: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    username: str = Depends(get_current_username),
+):
+    validated_name = validate_table_name(table_name)
+    with database.engine.connect() as conn:
+        result = conn.execute(
+            text(f'SELECT * FROM "{validated_name}" LIMIT :limit OFFSET :offset'),
+            {"limit": limit, "offset": offset},
+        )
+        rows = [dict(row._mapping) for row in result]
+
+        total_result = conn.execute(text(f'SELECT COUNT(*) FROM "{validated_name}"'))
+        total = total_result.scalar() or 0
+
+    return {"table": validated_name, "columns": list(rows[0].keys()) if rows else [], "rows": rows, "total": total}
 
 # Dependency
 def get_db():
