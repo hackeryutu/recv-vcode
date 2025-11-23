@@ -4,10 +4,18 @@ from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 import secrets
+import logging
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-import models, schemas, crud, database, mail_service
+import models, schemas, crud, database, mail_service, config
+
+# Configure logging
+logging.basicConfig(
+    level=config.LOG_LEVEL,
+    format=config.LOG_FORMAT
+)
+logger = logging.getLogger(__name__)
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -17,8 +25,8 @@ security = HTTPBasic()
 templates = Jinja2Templates(directory="templates")
 
 def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
-    correct_username = secrets.compare_digest(credentials.username, "admin")
-    correct_password = secrets.compare_digest(credentials.password, "admin123")
+    correct_username = secrets.compare_digest(credentials.username, config.ADMIN_USERNAME)
+    correct_password = secrets.compare_digest(credentials.password, config.ADMIN_PASSWORD)
     if not (correct_username and correct_password):
         raise HTTPException(
             status_code=401,
@@ -103,17 +111,23 @@ def read_mail(
 
 @app.get("/api/mail/messages")
 def get_mail_messages(
-    mail_id: str, 
-    token: str, 
+    mail_id: str,
+    token: str,
     sender: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
+    logger.info(f"[API] /api/mail/messages called - mail_id: {mail_id}, sender: {sender}")
+
     account = crud.get_email_account(db, mail_id=mail_id)
     if not account:
+        logger.warning(f"[API] Mail ID not found: {mail_id}")
         raise HTTPException(status_code=404, detail="Mail ID not found")
-    
+
     if account.access_token != token:
+        logger.warning(f"[API] Invalid token for mail_id: {mail_id}")
         raise HTTPException(status_code=403, detail="Invalid token")
-    
+
+    logger.info(f"[API] Fetching emails for: {account.email}, imap_server: {account.imap_server}")
     emails = mail_service.fetch_recent_emails(account, sender_filter=sender)
+    logger.info(f"[API] Fetch complete - result type: {type(emails).__name__}, is_error: {'error' in emails if isinstance(emails, dict) else False}")
     return emails

@@ -1,5 +1,6 @@
 import requests
 import time
+import config
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -18,7 +19,7 @@ def test_api():
         "default_sender_filter": "sender@example.com"
     }
     try:
-        response = requests.post(f"{BASE_URL}/admin/accounts", json=payload)
+        response = requests.post(f"{BASE_URL}/admin/accounts", json=payload, timeout=config.HTTP_TIMEOUT)
         print(f"Create Status: {response.status_code}")
         print(f"Create Response: {response.json()}")
     except Exception as e:
@@ -27,19 +28,19 @@ def test_api():
 
     # 2. List Accounts
     print("\nTesting List Accounts...")
-    response = requests.get(f"{BASE_URL}/admin/accounts")
+    response = requests.get(f"{BASE_URL}/admin/accounts", timeout=config.HTTP_TIMEOUT)
     print(f"List Status: {response.status_code}")
     print(f"List Response: {response.json()}")
 
     # 3. Fetch Mail (Expected to fail connection, but pass auth)
     print("\nTesting Fetch Mail...")
-    response = requests.get(f"{BASE_URL}/mail", params={"mail_id": "test_001", "token": "secret_token"})
+    response = requests.get(f"{BASE_URL}/mail", params={"mail_id": "test_001", "token": "secret_token"}, timeout=config.HTTP_TIMEOUT)
     print(f"Fetch Status: {response.status_code}")
     print(f"Fetch Response: {response.json()}")
 
     # 4. Fetch Mail (Invalid Token)
     print("\nTesting Fetch Mail (Invalid Token)...")
-    response = requests.get(f"{BASE_URL}/mail", params={"mail_id": "test_001", "token": "wrong_token"})
+    response = requests.get(f"{BASE_URL}/mail", params={"mail_id": "test_001", "token": "wrong_token"}, timeout=config.HTTP_TIMEOUT)
     print(f"Fetch Invalid Status: {response.status_code}")
     print(f"Fetch Invalid Response: {response.json()}")
 

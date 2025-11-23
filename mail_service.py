@@ -3,42 +3,87 @@ import email
 from email.header import decode_header
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
+import logging
+import socket
 import models
+import config as app_config
 
-def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, limit: int = 5):
+logger = logging.getLogger(__name__)
+
+def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, limit: int = 5, timeout: int = None):
+    # Use configured timeout if not specified
+    if timeout is None:
+        timeout = app_config.IMAP_TIMEOUT
+
     target_sender = sender_filter if sender_filter else config.default_sender_filter
-    
+    logger.info(f"[MAIL] fetch_recent_emails started - email: {config.email}, sender_filter: {target_sender}, timeout: {timeout}s")
+
     if not target_sender:
+        logger.warning("[MAIL] No sender filter specified")
         return {"error": "No sender filter specified"}
 
     try:
-        mail = imaplib.IMAP4_SSL(config.imap_server)
+        logger.info(f"[MAIL] Connecting to IMAP server: {config.imap_server} (timeout: {timeout}s)")
+        # Create IMAP connection with timeout
+        mail = imaplib.IMAP4_SSL(config.imap_server, timeout=timeout)
+        logger.info("[MAIL] IMAP connection established, attempting login...")
+
+        # Set socket timeout for all subsequent operations
+        if hasattr(mail, 'sock') and mail.sock:
+            mail.sock.settimeout(timeout)
+
         mail.login(config.email, config.password)
+        logger.info("[MAIL] Login successful")
+    except socket.timeout:
+        logger.error(f"[MAIL] IMAP connection/login timeout after {timeout}s - Failed to connect or authenticate to {config.imap_server}")
+        return {"error": f"IMAP connection/login timeout after {timeout}s"}
     except Exception as e:
+        logger.error(f"[MAIL] Connection/Login failed: {str(e)}")
         return {"error": f"Connection failed: {str(e)}"}
 
     try:
-        mail.select("inbox")
-        
+        logger.info("[MAIL] Selecting inbox...")
+        try:
+            mail.select("inbox")
+            logger.info("[MAIL] Inbox selected")
+        except socket.timeout:
+            logger.error(f"[MAIL] Timeout while selecting inbox after {timeout}s")
+            raise
+
         # Search for emails from the specific sender
-        status, messages = mail.search(None, f'(FROM "{target_sender}")')
-        
+        logger.info(f"[MAIL] Searching emails from: {target_sender}")
+        try:
+            status, messages = mail.search(None, f'(FROM "{target_sender}")')
+            logger.info(f"[MAIL] Search completed - status: {status}")
+        except socket.timeout:
+            logger.error(f"[MAIL] Timeout while searching emails from '{target_sender}' after {timeout}s")
+            raise
+
         if status != "OK":
+            logger.warning("[MAIL] Search status not OK")
             return {"message": "No emails found"}
 
         email_ids = messages[0].split()
-        
+        logger.info(f"[MAIL] Found {len(email_ids)} email(s)")
+
         if not email_ids:
+            logger.info(f"[MAIL] No emails found from {target_sender}")
             return {"message": f"No emails found from {target_sender}"}
 
         # Get the last N emails
         recent_email_ids = email_ids[-limit:]
         recent_email_ids.reverse() # Newest first
-        
+        logger.info(f"[MAIL] Processing {len(recent_email_ids)} recent email(s)")
+
         email_list = []
 
-        for e_id in recent_email_ids:
-            status, msg_data = mail.fetch(e_id, "(RFC822)")
+        for idx, e_id in enumerate(recent_email_ids):
+            logger.info(f"[MAIL] Fetching email {idx + 1}/{len(recent_email_ids)} (id: {e_id})")
+            try:
+                status, msg_data = mail.fetch(e_id, "(RFC822)")
+            except socket.timeout:
+                logger.error(f"[MAIL] Timeout while fetching email {idx + 1}/{len(recent_email_ids)} (id: {e_id}) after {timeout}s")
+                raise
             
             email_content = {"subject": "Unknown", "body": "", "from": "", "date": ""}
 
@@ -103,12 +148,26 @@ def fetch_recent_emails(config: models.EmailAccount, sender_filter: str = None, 
             
             email_list.append(email_content)
 
+        logger.info(f"[MAIL] Closing connection, total emails fetched: {len(email_list)}")
         mail.close()
         mail.logout()
+        logger.info("[MAIL] Connection closed successfully")
         return email_list
 
+    except socket.timeout:
+        error_msg = f"IMAP operation timeout after {timeout}s - Check network connection and IMAP server responsiveness"
+        logger.error(f"[MAIL] {error_msg}")
+        try:
+            mail.close()
+            mail.logout()
+        except:
+            pass
+        return {"error": error_msg}
     except Exception as e:
-        return {"error": f"Error fetching mail: {str(e)}"}
-
-    except Exception as e:
+        logger.error(f"[MAIL] Error fetching mail: {str(e)}")
+        try:
+            mail.close()
+            mail.logout()
+        except:
+            pass
         return {"error": f"Error fetching mail: {str(e)}"}

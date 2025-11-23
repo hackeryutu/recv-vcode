@@ -1,5 +1,6 @@
 import requests
 import time
+import config
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -18,7 +19,7 @@ def test_api():
         "default_sender_filter": "sender1"
     }
     try:
-        resp = requests.post(f"{BASE_URL}/admin/accounts", json=payload)
+        resp = requests.post(f"{BASE_URL}/admin/accounts", json=payload, timeout=config.HTTP_TIMEOUT)
         print(f"Create: {resp.status_code}")
         account_id = resp.json().get("id")
     except Exception as e:
@@ -35,12 +36,12 @@ def test_api():
         "email": "updated@example.com",
         "default_sender_filter": "sender2"
     }
-    resp = requests.put(f"{BASE_URL}/admin/accounts/{account_id}", json=update_payload)
+    resp = requests.put(f"{BASE_URL}/admin/accounts/{account_id}", json=update_payload, timeout=config.HTTP_TIMEOUT)
     print(f"Update: {resp.status_code}")
     print(f"Update Resp: {resp.json()}")
 
     # 3. Verify Update
-    resp = requests.get(f"{BASE_URL}/admin/accounts")
+    resp = requests.get(f"{BASE_URL}/admin/accounts", timeout=config.HTTP_TIMEOUT)
     accounts = resp.json()
     updated_acc = next((a for a in accounts if a["id"] == account_id), None)
     if updated_acc and updated_acc["email"] == "updated@example.com":
@@ -50,11 +51,11 @@ def test_api():
 
     # 4. Delete Account
     print("\nTesting Delete Account...")
-    resp = requests.delete(f"{BASE_URL}/admin/accounts/{account_id}")
+    resp = requests.delete(f"{BASE_URL}/admin/accounts/{account_id}", timeout=config.HTTP_TIMEOUT)
     print(f"Delete: {resp.status_code}")
 
     # 5. Verify Delete
-    resp = requests.get(f"{BASE_URL}/admin/accounts")
+    resp = requests.get(f"{BASE_URL}/admin/accounts", timeout=config.HTTP_TIMEOUT)
     accounts = resp.json()
     deleted_acc = next((a for a in accounts if a["id"] == account_id), None)
     if not deleted_acc:
