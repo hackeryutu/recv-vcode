@@ -1,10 +1,12 @@
 import imaplib
 import email
 import json
+import re
 from email.header import decode_header
 from datetime import datetime, timezone, timedelta
 import logging
 import socket
+from typing import List
 from sqlalchemy.orm import Session
 import crud
 import models
@@ -15,6 +17,27 @@ logger = logging.getLogger(__name__)
 GENERIC_TIMEOUT_ERROR = "邮件服务超时，请稍后再试"
 GENERIC_CONNECTION_ERROR = "无法连接邮件服务器，请稍后重试"
 GENERIC_FETCH_ERROR = "获取邮件失败，请稍后再试"
+FILTER_SPLIT_PATTERN = re.compile(r"[,\n;]+")
+
+def parse_sender_filters(raw_value: str) -> List[str]:
+    if not raw_value:
+        return []
+    if isinstance(raw_value, list):
+        return [item.strip() for item in raw_value if item and isinstance(item, str)]
+    parts = FILTER_SPLIT_PATTERN.split(str(raw_value))
+    return [part.strip() for part in parts if part.strip()]
+
+def build_sender_search_query(filters: List[str]) -> str:
+    def escape_value(value: str) -> str:
+        return value.replace('"', r'\"')
+
+    if len(filters) == 1:
+        return f'(FROM "{escape_value(filters[0])}")'
+
+    query = f'(FROM "{escape_value(filters[0])}")'
+    for value in filters[1:]:
+        query = f'(OR {query} (FROM "{escape_value(value)}"))'
+    return query
 
 def fetch_recent_emails(
     config: models.EmailAccount,
@@ -27,12 +50,18 @@ def fetch_recent_emails(
     if timeout is None:
         timeout = app_config.IMAP_TIMEOUT
 
-    target_sender = sender_filter if sender_filter else config.default_sender_filter
-    logger.info(f"[MAIL] fetch_recent_emails started - email: {config.email}, sender_filter: {target_sender}, timeout: {timeout}s")
+    provided_filters = parse_sender_filters(sender_filter) if sender_filter else []
+    default_filters = parse_sender_filters(config.default_sender_filter)
+    target_filters = provided_filters or default_filters
+
+    logger.info(
+        f"[MAIL] fetch_recent_emails started - email: {config.email}, "
+        f"sender_filters: {target_filters}, timeout: {timeout}s"
+    )
 
     cache_entry = crud.get_email_cache(db, config.id) if db else None
 
-    if not target_sender:
+    if not target_filters:
         logger.warning("[MAIL] No sender filter specified")
         return {"error": "No sender filter specified"}
 
@@ -64,13 +93,13 @@ def fetch_recent_emails(
             logger.error(f"[MAIL] Timeout while selecting inbox after {timeout}s")
             raise
 
-        # Search for emails from the specific sender
-        logger.info(f"[MAIL] Searching emails from: {target_sender}")
+        search_query = build_sender_search_query(target_filters)
+        logger.info(f"[MAIL] Searching emails with query: {search_query}")
         try:
-            status, messages = mail.search(None, f'(FROM "{target_sender}")')
+            status, messages = mail.search(None, search_query)
             logger.info(f"[MAIL] Search completed - status: {status}")
         except socket.timeout:
-            logger.error(f"[MAIL] Timeout while searching emails from '{target_sender}' after {timeout}s")
+            logger.error(f"[MAIL] Timeout while searching emails with query '{search_query}' after {timeout}s")
             raise
 
         if status != "OK":
@@ -81,8 +110,9 @@ def fetch_recent_emails(
         logger.info(f"[MAIL] Found {len(email_ids)} email(s)")
 
         if not email_ids:
-            logger.info(f"[MAIL] No emails found from {target_sender}")
-            return {"message": f"No emails found from {target_sender}"}
+            logger.info(f"[MAIL] No emails found for filters: {target_filters}")
+            filter_desc = ", ".join(target_filters)
+            return {"message": f"No emails found from {filter_desc}"}
 
         # Get the last N emails
         recent_email_ids = email_ids[-limit:]
@@ -94,14 +124,26 @@ def fetch_recent_emails(
 
         id_strings = [e_id.decode() for e_id in recent_email_ids if e_id]
 
+        cache_filters = []
         if cache_entry and cache_entry.message_ids and cache_entry.payload:
             try:
-                cached_ids = json.loads(cache_entry.message_ids)
+                cached_data = json.loads(cache_entry.message_ids)
+                if isinstance(cached_data, dict):
+                    cached_ids = cached_data.get("ids")
+                    cache_filters = cached_data.get("filters") or []
+                else:
+                    cached_ids = cached_data
                 cached_payload = json.loads(cache_entry.payload)
             except json.JSONDecodeError:
                 cached_ids = cached_payload = None
             else:
-                if cached_ids == id_strings:
+                filters_match = False
+                if cache_filters:
+                    filters_match = cache_filters == target_filters
+                else:
+                    filters_match = not provided_filters
+
+                if cached_ids == id_strings and filters_match:
                     logger.info(f"[MAIL] Returning cached emails (no new messages) for account: {config.email}")
                     return cached_payload
 
@@ -167,10 +209,11 @@ def fetch_recent_emails(
 
         if db:
             try:
+                cache_wrapper = {"filters": target_filters, "ids": id_strings}
                 crud.upsert_email_cache(
                     db,
                     config.id,
-                    json.dumps(id_strings, ensure_ascii=False),
+                    json.dumps(cache_wrapper, ensure_ascii=False),
                     json.dumps(email_list, ensure_ascii=False),
                 )
             except Exception as cache_error:
